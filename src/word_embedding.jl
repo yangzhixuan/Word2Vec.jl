@@ -174,6 +174,7 @@ function _merge_distributions(refs::Array{RemoteRef,1})
     result
 end
 
+merge_distributions(refs) = merge_distributions(convert(Array{RemoteRef,1}, refs))
 function merge_distributions(refs::Array{RemoteRef,1})
     result = refs
     while length(result) > 1
@@ -184,29 +185,16 @@ end
 
 # TODO: multi stage reduce on workers
 function word_distribution(b::Block)
+    t1 = time()
     count_refs = pmap(_word_distribution, b; fetch_results=false)
     word_count, distribution = merge_distributions(count_refs)
-
-    #word_count = 0
-    #distribution = Dict{AbstractString, Float64}()
-    #for ref in count_refs
-    #    wc, dist = fetch(ref)
-    #    word_count += wc
-    #    for (n,v) in dist
-    #        if haskey(distribution, n)
-    #            distribution[n] += v
-    #        else
-    #            distribution[n] = v
-    #        end
-    #    end
-    #end
-
     for (k, v) in distribution
         distribution[k] /= word_count
     end
 
     println("Total Word Count: $word_count words")
     println("Total Vocabulary Size: $(length(keys(distribution)))")
+    println("Compute time: $(time()-t1)")
 
     distribution
 end
