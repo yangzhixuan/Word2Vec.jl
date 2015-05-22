@@ -61,6 +61,15 @@ function WordEmbedding(dim::Int64, init_type::InitializatioinMethod, network_typ
                          subsampling)
 end
 
+# strip embedding and retain only word vectors
+function _strip(embed::WordEmbedding)
+    embed.vocabulary = AbstractString[]
+    embed.classification_tree = nullnode
+    embed.distribution = Dict{AbstractString,Array{Float64}}()
+    embed.codebook = Dict{AbstractString,Vector{Int64}}()
+    embed
+end
+
 # save the trained model to be restored later
 function save(embed::WordEmbedding, filename::AbstractString)
     open(filename, "w") do fp
@@ -123,6 +132,7 @@ function work_process(embed::WordEmbedding, words_stream::Task)
     end
     t2 = time()
     println("Finished training. Trained on $(embed.trained_count) words in $(t2-t1) seconds. Sending result to the main process")
+    _strip(embed)
     save(embed, "/tmp/emb-$(myid())")
     t3 = time()
     println("Saved result at /tmp/emb/$(myid()) in $(t3-t2) seconds")
