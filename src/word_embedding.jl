@@ -84,6 +84,13 @@ end
 
 # now we can start the training
 function work_process(embed::WordEmbedding, words_stream::Task)
+    t1 = time()
+    if isfile("/tmp/emb-$(myid())")
+        embed = restore("/tmp/emb-$(myid())")
+        t2 = time()
+        println("Restored training. Restored training data on $(embed.trained_count) words in $(t2-t1) seconds. Sending result to the main process")
+        return embed
+    end
     middle = embed.lsize + 1
     input_gradient = zeros(Float64, embed.dimension)
     for window in sliding_window(words_stream, lsize = embed.lsize, rsize = embed.rsize)
@@ -114,7 +121,11 @@ function work_process(embed::WordEmbedding, words_stream::Task)
             BLAS.axpy!(embed.dimension, -1.0, vec(input_gradient), 1, vec(embed.embedding[trained_word]), 1)
         end
     end
-    println("Finished training. Trained on $(embed.trained_count) words. Sending result to the main process")
+    t2 = time()
+    println("Finished training. Trained on $(embed.trained_count) words in $(t2-t1) seconds. Sending result to the main process")
+    save(embed, "/tmp/emb-$(myid())")
+    t3 = time()
+    println("Saved result at /tmp/emb/$(myid()) in $(t3-t2) seconds")
     embed
 end
 
@@ -183,7 +194,6 @@ function merge_distributions(refs::Array{RemoteRef,1})
     fetch(result[1])
 end
 
-# TODO: multi stage reduce on workers
 function word_distribution(b::Block)
     t1 = time()
     count_refs = pmap(_word_distribution, b; fetch_results=false)
@@ -216,6 +226,7 @@ function _merge_embeds(ref1::RemoteRef, ref2::RemoteRef)
         e1.embedding[word] .+= e2.embedding[word]
     end
     e1.trained_count += e2.trained_count
+    println("merged $ref1 and $ref2")
     e1
 end
 
@@ -231,31 +242,40 @@ end
 
 merge_embeds(refs) = merge_embeds(convert(Array{RemoteRef,1}, refs))
 function merge_embeds(refs::Array{RemoteRef,1})
+    n = length(refs)
     result = refs
     while length(result) > 1
         result = _merge_embeds(result)
     end
-    fetch(result[1])
+    emb = fetch(result[1])
+    for word in emb.vocabulary
+        emb.embedding[word] /= n
+    end
+    emb
 end
 
 function train(embed::WordEmbedding, corpus::Block)
-    corpus = corpus |> as_io |> as_wordio
-    embed.distribution = word_distribution(corpus)
-    embed.vocabulary = collect(keys(embed.distribution))
+    if isfile("/tmp/emb")
+        corpus = corpus |> as_io |> as_wordio |> words_of
+    else
+        corpus = corpus |> as_io |> as_wordio
+        embed.distribution = word_distribution(corpus)
+        embed.vocabulary = collect(keys(embed.distribution))
 
-    initialize_embedding(embed, embed.init_type)        # initialize by the specified method
-    initialize_network(embed, embed.network_type)
+        initialize_embedding(embed, embed.init_type)        # initialize by the specified method
+        initialize_network(embed, embed.network_type)
 
-    # determine the position in the tree for every word
-    for (w, code) in leaves_of(embed.classification_tree)
-        embed.codebook[w] = code
+        # determine the position in the tree for every word
+        for (w, code) in leaves_of(embed.classification_tree)
+            embed.codebook[w] = code
+        end
+
+        # Note: subsampling is not honored here, probably not required also?
+        corpus = corpus |> words_of
+        save(embed, "/tmp/emb")
     end
-
-    # Note: subsampling is not honored here, probably not required also?
-    corpus = corpus |> words_of
-    println("Starting parallel training...")
     t1 = time()
-    save(embed, "/tmp/emb")
+    println("Starting parallel training...")
     embs = pmap((x)->work_process("/tmp/emb", x), corpus; fetch_results=false)
     t2 = time()
     println("Partial training done at $(t2-t1) time")
