@@ -70,6 +70,16 @@ function _strip(embed::WordEmbedding)
     embed
 end
 
+# print the code book for debug
+function _print_codebook(embed::WordEmbedding, N=10)
+    for (word,code) in embed.codebook
+        println("$word => $code")
+        N -= 1
+        (N > 0) || break
+    end
+    nothing
+end
+
 # save the trained model to be restored later
 function save(embed::WordEmbedding, filename::AbstractString)
     open(filename, "w") do fp
